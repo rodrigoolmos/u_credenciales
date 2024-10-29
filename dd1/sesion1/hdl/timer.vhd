@@ -10,7 +10,7 @@ use IEEE.numeric_std.all;
 
 entity timer_1Hz is
     generic(
-        fin_cuenta : integer := 50000000
+        fin_cuenta : natural := 50000000
     );
     port( nRST  : in std_logic;
         clk   : in std_logic;
@@ -18,7 +18,8 @@ entity timer_1Hz is
 end timer_1Hz;
 
 architecture rtl of timer_1Hz is
-    signal cnt : unsigned(25 downto 0);
+    
+    signal cnt : unsigned(30 downto 0);
 
 begin
     process (nRST, clk)

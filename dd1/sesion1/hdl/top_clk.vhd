@@ -3,10 +3,14 @@ use ieee.std_logic_1164.all;
 use IEEE.numeric_std.all;
 
 entity clock_top is
+    generic(
+        clk_frec : natural := 50000000
+    );
     port(
         clk : in std_logic;
         anrst : in std_logic;
         rst : in std_logic;
+        BI : in std_logic;
         segDisp : buffer std_logic_vector(6 downto 0);
         muxDisp : buffer std_logic_vector(5 downto 0)
     );
@@ -20,27 +24,30 @@ architecture top of clock_top is
     signal minutos_d : std_logic_vector(3 downto 0);
     signal segundos_u : std_logic_vector(3 downto 0);
     signal segundos_d : std_logic_vector(3 downto 0);
-    signal BI : std_logic_vector(5 downto 0);
     signal f_1Hz : std_logic;
-    signal mux_cnt : unsigned(25 downto 0) ;
+    signal mux_cnt : unsigned(30 downto 0) ;
+    type segDispArray is array (5 downto 0) of std_logic_vector(6 downto 0);
+    signal segDisp_vec : segDispArray;
+    signal disp_sel :  std_logic_vector(5 downto 0);
 
+    
 begin
 
-    process (clk, anrst)
+    process (anrst, clk)
     begin
         if anrst = '0' then
-            BI <= "111110";
-            mux_cnt <= (others => '0');
-        elsif rising_edge(clk) then
-            if mux_cnt < 50000 then
+            mux_cnt <= (0 => '1', others => '0');
+            disp_sel <= "000001";
+        elsif clk = '1' and clk'event then
+            if mux_cnt < clk_frec/1000 then
                 mux_cnt <= mux_cnt + 1;
             else
-                mux_cnt <= (others => '0');
-                BI <= BI(4 downto 0) & BI(5);     
+                mux_cnt <= (0 => '1', others => '0');
+                disp_sel <= disp_sel(4 downto 0) & disp_sel(5);
             end if;
-            
         end if;
     end process;
+
 
     cnt_dec: entity Work.cont_dec(rtl)
     port map(
@@ -58,7 +65,7 @@ begin
 
     timer: entity Work.timer_1Hz(rtl)
     generic map(
-        fin_cuenta => 5
+        fin_cuenta => clk_frec
     )
     port map( nRST  => anrst,
         clk   => clk,
@@ -68,43 +75,52 @@ begin
     s_u: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => segundos_u,
-        segDisp => segDisp,
-        BI => BI(0)
+        segDisp => segDisp_vec(0),
+        BI => BI
     );
 
     s_d: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => segundos_d,
-        segDisp => segDisp,
-        BI => BI(1)
+        segDisp => segDisp_vec(1),
+        BI =>BI
     );
 
     m_u: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => minutos_u,
-        segDisp => segDisp,
-        BI => BI(2)
+        segDisp => segDisp_vec(2),
+        BI => BI
     );
     
     m_d: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => minutos_d,
-        segDisp => segDisp,
-        BI => BI(3)
+        segDisp => segDisp_vec(3),
+        BI => BI
     );
 
     h_u: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => horas_u,
-        segDisp => segDisp,
-        BI => BI(4)
+        segDisp => segDisp_vec(4),
+        BI => BI
     );
     
     h_d: entity Work.decodBCD7seg(rtl)
     port map(
         digBCD => horas_d,
-        segDisp => segDisp,
-        BI => BI(5)
+        segDisp => segDisp_vec(5),
+        BI => BI
     );
+    
+    segDisp <= segDisp_vec(0) when disp_sel = "000001" else
+    segDisp_vec(1) when disp_sel = "000010" else
+    segDisp_vec(2) when disp_sel = "000100" else
+    segDisp_vec(3) when disp_sel = "001000" else
+    segDisp_vec(4) when disp_sel = "010000" else
+    segDisp_vec(5) when disp_sel = "100000";
+    
+    muxDisp <= not disp_sel;
 
 end top;
