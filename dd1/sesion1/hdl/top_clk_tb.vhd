@@ -37,11 +37,11 @@ begin
         rst <= '0';
         wait for 1 ns;
         anrst <= '1';
-        wait for 5 ms;
+        wait for 25 ms;
         rst <= '1';
         wait for 10 us;
         rst <= '0';
-        wait for 50 ms;
+        wait for 5 ms;
         finished <= '1';
         wait;
     end process;
@@ -54,6 +54,7 @@ begin
         clk => clk,
         anrst => anrst,
         BI => '0',
+        UP_DOWN => '0',
         rst => rst,
         segDisp => segDisp,
         muxDisp => muxDisp
