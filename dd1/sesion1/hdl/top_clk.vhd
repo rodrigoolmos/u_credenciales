@@ -11,6 +11,7 @@ entity clock_top is
         anrst : in std_logic;
         rst : in std_logic;
         BI : in std_logic;
+        UP_DOWN : in std_logic; -- UP 1 DOWN 0
         segDisp : buffer std_logic_vector(6 downto 0);
         muxDisp : buffer std_logic_vector(5 downto 0)
     );
@@ -24,6 +25,14 @@ architecture top of clock_top is
     signal minutos_d : std_logic_vector(3 downto 0);
     signal segundos_u : std_logic_vector(3 downto 0);
     signal segundos_d : std_logic_vector(3 downto 0);
+
+    signal horas_u_s : std_logic_vector(3 downto 0);
+    signal horas_d_s : std_logic_vector(3 downto 0);
+    signal minutos_u_s : std_logic_vector(3 downto 0);
+    signal minutos_d_s : std_logic_vector(3 downto 0);
+    signal segundos_u_s : std_logic_vector(3 downto 0);
+    signal segundos_d_s : std_logic_vector(3 downto 0);
+
     signal f_1Hz : std_logic;
     signal mux_cnt : unsigned(30 downto 0) ;
     type segDispArray is array (5 downto 0) of std_logic_vector(6 downto 0);
@@ -55,12 +64,12 @@ begin
         clk => clk,
         rst => rst,
         ena => f_1Hz,
-        horas_u => horas_u,
-        horas_d => horas_d,
-        minutos_u => minutos_u,
-        minutos_d => minutos_d,
-        segundos_u => segundos_u,
-        segundos_d => segundos_d
+        horas_u => horas_u_s,
+        horas_d => horas_d_s,
+        minutos_u => minutos_u_s,
+        minutos_d => minutos_d_s,
+        segundos_u => segundos_u_s,
+        segundos_d => segundos_d_s
     );
 
     timer: entity Work.timer_1Hz(rtl)
@@ -113,13 +122,26 @@ begin
         segDisp => segDisp_vec(5),
         BI => BI
     );
+
+    horas_u <= horas_u_s when UP_DOWN = '1' else
+        std_logic_vector(3 - UNSIGNED(horas_u_s)) when UNSIGNED(horas_u_s) < 4 else
+        std_logic_vector(13 - UNSIGNED(horas_u_s));
+
+    horas_d <= horas_d_s when UP_DOWN = '1' else 
+        std_logic_vector(2 - UNSIGNED(horas_d_s)) when UNSIGNED(horas_u_s) < 4 else
+        std_logic_vector(1 - UNSIGNED(horas_d_s));
+    
+    minutos_u <= minutos_u_s when UP_DOWN = '1' else std_logic_vector(9 - UNSIGNED(minutos_u_s));
+    minutos_d <= minutos_d_s when UP_DOWN = '1' else std_logic_vector(5 - UNSIGNED(minutos_d_s));
+    segundos_u <= segundos_u_s when UP_DOWN = '1' else std_logic_vector(9 - UNSIGNED(segundos_u_s));
+    segundos_d <= segundos_d_s when UP_DOWN = '1' else std_logic_vector(5 - UNSIGNED(segundos_d_s));
     
     segDisp <= segDisp_vec(0) when disp_sel = "000001" else
-    segDisp_vec(1) when disp_sel = "000010" else
-    segDisp_vec(2) when disp_sel = "000100" else
-    segDisp_vec(3) when disp_sel = "001000" else
-    segDisp_vec(4) when disp_sel = "010000" else
-    segDisp_vec(5) when disp_sel = "100000";
+        segDisp_vec(1) when disp_sel = "000010" else
+        segDisp_vec(2) when disp_sel = "000100" else
+        segDisp_vec(3) when disp_sel = "001000" else
+        segDisp_vec(4) when disp_sel = "010000" else
+        segDisp_vec(5) when disp_sel = "100000";
     
     muxDisp <= not disp_sel;
 
