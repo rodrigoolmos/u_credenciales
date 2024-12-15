@@ -1,0 +1,121 @@
+vunit check_master_spi_4_hilos(master_spi_4_hilos(rtl))
+{
+  -- Reloj de muestreo de segnales PSL
+  --------------------------- 
+    default clock is (rising_edge(clk));
+
+  ---------------------------------------------------------------------------
+  -- Aserciones del funcionamiento de la interfaz de control del master SPI:
+  ---------------------------------------------------------------------------
+
+  ---------------------------------------------------------------------------------------------------------------
+  -- 1.- Segnales start, nWR_RD, no_bytes, rdy
+  ---------------------------------------------------------------------------------------------------------------
+  -- 1.1.- Una transferencia comienza con 1 tic (1 pulso de 1 Tclk) en la segnal de start
+     -- LTL
+     ass_start_then_nCS_low: assert always ((start and rdy) -> next(not nCS) abort fell(nRst))                                 -- ASSERT basica LTL
+                             report "ERROR: No se atiende la orden de start" ; 
+
+     asm_gu_start_tic: assume_guarantee always (start -> next(not start)) abort fell(nRst)                                     -- ASSUME_GUARANTEE (Se provoca violacion en T-B)
+                       report "NOTE: Pulso de start de más de 1 Tclk" ; 
+     
+
+  -- 1.2.- las transferencias de escritura son de 1 byte (no_bytes = 2)  y las de lectura de 3 (no_bytes = 3)                               -- Indican que no_bytes debe mantener su valor durante la transferencia 
+     asm_gu_Bytes_WR_OK: assume_guarantee always ((start and rdy and (not nWR_RD)) -> (no_bytes = "010") until rose(nCS)) abort fell(nRst)  -- Es asi en la realizacion del master (a proposito)
+                         report "ERROR: Valor incorrecto de no_bytes durante una transferencia de escritura";
+
+     asm_gu_Bytes_RD_OK: assume_guarantee always ((start and rdy and nWR_RD) -> (no_bytes = "011") until rose(nCS)) abort fell(nRst)
+                         report "ERROR: Valor incorrecto de no_bytes durante una transferencia de lectura";
+
+     cover_SPI_WR: cover {(start and rdy and (not nWR_RD))};                                                                   -- Dos cover (no tienen -apenas- sentido en test deterministas)
+     cover_SPI_RD: cover {start and rdy and nWR_RD};
+
+  -- 1.3.- start solo se debe activar cuando rdy = 1                                                                           -- Avisa de un manejo anomalo del master SPI
+     asm_gu_start_when_rdy:assume_guarantee always (start -> rdy)
+                           report "NOTE:Se ha activado start durante una transaccion";
+
+  -- 1.4.- Tras la activacion de start se desactiva rdy
+     ass_start_then_not_rdy: assert always (start -> next (not rdy) async_abort fell(nRst))                                    -- Funcionalidad debida
+                             report "ERROR: No se desactiva rdy tras start";
+
+
+  ---------------------------------------------------------------------------------------------------------------
+  -- 2.- Lecturas (ena_rd)
+  ---------------------------------------------------------------------------------------------------------------
+
+  -- 2.1.- La segnal ena_rd es un tic que solo ocurre durante el desarrollo de una transferencia (nCS = 0)                        -- Asercion rara: combina dos condiciones (mala praxis)
+     ass_ena_rd_tic_en_not_nCS: assert always ena_rd -> (not nCS -> next (not ena_rd)) abort fell(nRst)                                         
+                        report "ERROR: generacion incorrecta de ena_rd";  
+                                                                                                                                  -- SEREs
+  -- 2.2.- Durante una transferencia de lectura se producen 2 pulsos de ena_rd                                                    
+     ass_2_tics_ena_rd: assert always({start and rdy and nWR_RD} |=> {{rose(ena_rd)[->2] && {(not nCS)[*]}&& ena_rd[->2]};(not ena_rd)[*]:rose(nCS)} ) abort fell(nRst) 
+                        report "No se han producido 2 pulsos de ena_rd en la lectura";
+						
+
+  -- 2.3.- El 1º pulso de ena_rd se produce despues del 16º flanco positivo del reloj del bus y el 2º 8 despues                   -- Secuencia SERE compleja descompuesta:
+     sequence SPC_up16_plus_down   is {{rose(SPC)[->16] within (not ena_rd)[*]};(not ena_rd)[+];fell(SPC):rose(ena_rd)};          -- Pulso de ena_rd en el 17o flanco de bajada de SPC 
+     sequence SPC_up08_plus_ena_rd is {{rose(SPC)[->8]  within (not ena_rd)[*]};(not ena_rd)[*];rose(ena_rd)};                    -- Pulso de ena_rd tras 8 pulsos de SPC (sin flanco bajada SPC) 
+
+
+     ass_ena_rd_timing: assert always ({start and rdy and nWR_RD}|-> {SPC_up16_plus_down;SPC_up08_plus_ena_rd}) abort fell(nRst)  -- Timing de los 2 pulsos de ena_rd 
+                        report "ERROR: Temporizacion incorrecta de los pulsos de ena_rd";
+
+  -- 2.4.- Durante una transferencia de escritura no hay pulsos de ena_rd
+     ass_no_ena_RD_when_WR: assert always ({(start and rdy and (not nWR_RD));fell(nCS)} |-> (not ena_rd) until rose(nCS)) abort fell(nRst) -- Mezcla SERE y LTL simple; antecedente secuencial 
+                            report "ERROR: Activacion incorrecta de ena_rd durante una escritura";
+
+
+
+  ---------------------------------------------------------------------------                                                     
+  -- Aserciones del bus SPI (Protocolo y tiempos)
+  ---------------------------------------------------------------------------
+
+  -- 3.1.- En reposo, las lineas nCS y SPC estan a 1                                                                              -- ASERCION INMEDIATA (THERE's NO TIME)
+     ass_SPI_nCS_y_SPC_reposo: assert always (rdy -> nCS and SPC)
+                               report "ERROR: las lineas nCS y SPC no estan a nivel alto en reposo";
+
+
+  -- 3.2.- En cada transferencia hay un multiplo (2 en WR o 3 en RD) de 8 ciclos de SPC                                           -- SECUENCIAS CON PARAMETROS
+     sequence T_SPC_bit is {SPC[+]; (not SPC)[+]};                                 -- 1 periodo de SPC H->L 
+     sequence seq_rep(sequence s; numeric n) is {s[*n]};                           -- s repetida n veces
+     sequence T_SPC_byte is {seq_rep(T_SPC_bit, 8)};                               -- 8 periodos de SPC  
+     sequence T_SPC_Transfer(numeric n) is {T_SPC_byte[*n]};                       -- n secuencias de 8 periodos de SPC
+     sequence T_SPC_READ  is {{T_SPC_Transfer(3);SPC[+]} && {(not nCS)[*]}};       -- SPC de una lectura de 2 bytes 
+     sequence T_SPC_WRITE is {{T_SPC_Transfer(2);SPC[+]} && {(not nCS)[*]}};       -- SPC de una escritura de 1 byte
+
+     ass_SPC_RD: assert always ({start and rdy and nWR_RD}      |=> {T_SPC_READ; rose(nCS)})  abort fell(nRst)
+                 report "ERROR: Numero incorrecto de ciclos de SPC en lectura de 2 bytes"; 
+     ass_SPC_WR: assert always ({start and rdy and (not nWR_RD)}|=> {T_SPC_WRITE; rose(nCS)}) abort fell(nRst)
+                 report "ERROR: Numero incorrecto de ciclos de SPC en escritura de 1 byte";
+
+  -- 3.3.- Periodo minimo (100 ns) - Frecuencia maxima de reloj (10 MHz)
+     ass_SPC_T_min: assert always ({fell(SPC)} |=> {(not fell(SPC))[*4]}) abort fell(nRst)
+                    report "ERROR: Periodo de SPC inferior al minimo";
+                      
+  -- 3.4.- Tiempo de set-up de nCS frente a SPC (5 ns) 
+     ass_tsu_nCS_SPC: assert always(fell(nCS) -> SPC)
+                      report "ERROR: Violacion del tsu de nCS respecto a bajada de SPC";
+
+  -- 3.5.- Tiempo de hold de nCS frente a SPC (20 ns)
+     ass_th_nCS_SPC:  assert always(rose(nCS) -> stable(SPC) and (SPC = '1'))
+                      report "ERROR: Violacion del th de nCS respecto a subida de SPC";
+
+  -- 3.6.- Tiempo de set-up de SDI frente a SPC (5 ns)  Nota: SDI  del esclavo es SDO del master
+     ass_tsu_SDI_SPC: assert always (not stable(SDO) and (nCS = '0') and stable(nCS))  -> not SPC -- el master resetea SDO tras activarse nCS cuando SPC = 1
+                      report "ERROR: Violacion del tsu de SDI respecto a flanco de subida de SPC";
+
+  -- 3.7.- Tiempo de hold de SDI frente a flanco de subida de SPC (15 ns) Nota: SDI  del esclavo es SDO del master
+     ass_th_SDI_SPC: assert always(rose(SPC) -> stable(SDO)) 
+                     report "ERROR: Violacion del th de SDI respecto a flanco de subida de SPC";
+
+  -- 3.8.- Manejo de SDO: Tiempo de hold de SDO respecto a flanco de bajada de SPC (5 ns) Nota: SDO  del esclavo es SDI del master
+     asm_gu_th_SDO_SPC: assume_guarantee always(fell(SPC) -> stable(SDI)) 
+                        report "ERROR: Violacion del th de SDO respecto a flanco de bajada de SPC";
+ 
+  -- 3.9.- Manejo de SDO: Tiempo maximo desde flanco de bajada para cambiar el dato en SDO (50 ns) Nota: SDO  del esclavo es SDI del master
+
+     asm_gu_tv_SDO_SPC: assume_guarantee always({fell(SPC);(not SPC[*2])} |=> stable(SDI) until_ rose(SPC)) abort fell(nRst) -- El esclavo retira el dato al desactivarse nCS tras el ultimo flanco de subida de SPC
+
+                        report "ERROR: Violacion del tv de SDO respecto a flanco de bajada de SPC";
+
+}
